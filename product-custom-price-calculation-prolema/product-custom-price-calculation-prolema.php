@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Product Custom Price Calculation PROLEMA
  * Description: Adds custom length (mm) field for variable products and calculates price automatically. Active only for selected category. Includes variation admin fields + bulk tool.
- * Version: 1.4.1
+ * Version: 1.5.0
  * Author: Samuel Marcinko
  * License: GPLv2 or later
  * Text Domain: pcpp-prolema
@@ -41,7 +41,30 @@ class PCPP_Prolema_Plugin {
     }
 
     private function is_target_product($product_id) {
-        return has_term(self::TARGET_CATEGORY_SLUG, 'product_cat', $product_id);
+        $term_ids = $this->get_target_term_ids();
+        if (empty($term_ids)) return false;
+        return has_term($term_ids, 'product_cat', $product_id);
+    }
+
+    /**
+     * Get term IDs for the target category and ALL its descendants.
+     * Result is cached in a static variable for the duration of the request.
+     */
+    private function get_target_term_ids() {
+        static $ids = null;
+        if ($ids !== null) return $ids;
+
+        $parent = get_term_by('slug', self::TARGET_CATEGORY_SLUG, 'product_cat');
+        if (!$parent || is_wp_error($parent)) {
+            $ids = [];
+            return $ids;
+        }
+
+        $children = get_term_children($parent->term_id, 'product_cat');
+        if (is_wp_error($children)) $children = [];
+
+        $ids = array_merge([$parent->term_id], $children);
+        return $ids;
     }
 
     private function admin_notice_redirect($message, $type = 'updated') {
@@ -806,12 +829,25 @@ class PCPP_Prolema_Plugin {
             wp_die('Neplatný nonce.');
         }
 
+        $parent = get_term_by('slug', self::TARGET_CATEGORY_SLUG, 'product_cat');
+        if (!$parent || is_wp_error($parent)) {
+            $this->admin_notice_redirect('Kategória ' . self::TARGET_CATEGORY_SLUG . ' nebola nájdená.', 'error');
+            return;
+        }
+
         $args = [
             'status'   => ['publish', 'private', 'draft'],
             'limit'    => -1,
             'type'     => ['variable'],
-            'category' => [self::TARGET_CATEGORY_SLUG],
             'return'   => 'ids',
+            'tax_query' => [
+                [
+                    'taxonomy'         => 'product_cat',
+                    'field'            => 'term_id',
+                    'terms'            => $parent->term_id,
+                    'include_children' => true,
+                ],
+            ],
         ];
 
         $product_ids = wc_get_products($args);
